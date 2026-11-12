@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vrymdor-node"
+version = "1.1.0"
+description = "Python client for the Vrymdor AI Node: governed tool, model and webhook calls, LangChain and LlamaIndex tools, and vrymdor-mcp, the MCP bridge for Claude Desktop, Cursor and VS Code."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Vrymnox Systems LLC", email = "support@vrymdor.com" }]
+keywords = ["ai", "agents", "mcp", "governance", "pii", "langchain", "llamaindex", "vrymdor"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = ["httpx>=0.27,<1"]
+
+[project.scripts]
+vrymdor-mcp = "vrymdor_mcp:main"
+vrymdor-node = "vrymdor_mcp:main"   # the same bridge: MCP clients installing from the MCP Registry run uvx vrymdor-node
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.3.49"]   # 0.3.49 is the first that takes a JSON Schema dict as args_schema
+llamaindex = ["llama-index-core>=0.12", "pydantic>=2"]
+
+[project.urls]
+Homepage = "https://vrymdor.com"
+Documentation = "https://docs.vrymdor.com/ai-node.html"
+Source = "https://github.com/ernesthausmann15/vrymdor-node-python"
+Issues = "https://github.com/ernesthausmann15/vrymdor-node-python/issues"
+
+[tool.setuptools]
+py-modules = ["vrymnox_node", "vrymdor_mcp"]

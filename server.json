@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.ernesthausmann15/vrymdor-mcp",
+  "title": "Vrymdor AI Node",
+  "description": "Masks personal data and secrets in what your AI agent's tools send and receive, through your Vrymdor AI Node.",
+  "repository": {"url": "https://github.com/ernesthausmann15/vrymdor-node-python", "source": "github"},
+  "websiteUrl": "https://vrymdor.com/developers/connect",
+  "version": "1.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "vrymdor-node",
+      "version": "1.1.0",
+      "runtimeHint": "uvx",
+      "transport": {"type": "stdio"},
+      "environmentVariables": [
+        {"name": "VRYMNOX_NODE_URL", "description": "Your Node Host URL from the Vrymdor dashboard, for example https://node.vrymdor.com/t/abc123def456", "isRequired": true, "format": "string"},
+        {"name": "VRYMNOX_AGENT_ID", "description": "The Agent ID (agt_...) from AI agents in the Vrymdor dashboard", "isRequired": true, "format": "string"},
+        {"name": "VRYMNOX_AGENT_SECRET", "description": "The Agent Secret (vrym_agent_...) shown once when you add the agent", "isRequired": true, "isSecret": true, "format": "string"}
+      ]
+    }
+  ]
+}
