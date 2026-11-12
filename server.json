@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.ernesthausmann15/vrymdor-mcp",
   "title": "Vrymdor AI Node",
-  "description": "Masks personal data and secrets in what your AI agent's tools send and receive, through your Vrymdor AI Node.",
+  "description": "Masks personal data and secrets in your AI agent's tool calls, through your Vrymdor AI Node.",
   "repository": {"url": "https://github.com/ernesthausmann15/vrymdor-node-python", "source": "github"},
   "websiteUrl": "https://vrymdor.com/developers/connect",
   "version": "1.1.0",
