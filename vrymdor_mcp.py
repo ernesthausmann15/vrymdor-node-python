@@ -393,9 +393,13 @@ def restart_claude(platform: str | None = None) -> str:
     platform = platform or sys.platform
     try:
         if platform.startswith("win"):
-            ps = ("$p = Get-Process claude -ErrorAction SilentlyContinue; if (-not $p) { 'not running'; exit }; "
-                  "$path = ($p | Where-Object Path | Select-Object -First 1).Path; $p | Stop-Process -Force; "
-                  "Start-Sleep -Seconds 2; if ($path) { Start-Process $path; 'restarted' } else { 'closed' }")
+            # Close it if it runs, then open it from its Start menu entry (works for the installer and the packaged
+            # install alike); the path of the running copy is the fallback.
+            ps = ("$p = Get-Process claude -ErrorAction SilentlyContinue; $path = ($p | Where-Object Path | "
+                  "Select-Object -First 1).Path; if ($p) { $p | Stop-Process -Force; Start-Sleep -Seconds 2 }; "
+                  "$app = Get-StartApps -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Claude' } | "
+                  "Select-Object -First 1; if ($app) { Start-Process \"shell:AppsFolder\\$($app.AppID)\"; 'restarted' } "
+                  "elseif ($path) { Start-Process $path; 'restarted' } elseif ($p) { 'closed' } else { 'not running' }")
             out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
                                  timeout=30).stdout.strip().splitlines()
             return out[-1] if out else "closed"

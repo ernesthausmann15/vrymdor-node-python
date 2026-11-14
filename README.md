@@ -53,7 +53,7 @@ restarts Claude Desktop. Use the three values from AI agents, Connect your AI No
 Windows (PowerShell):
 
 ```powershell
-$env:UV_SYSTEM_CERTS="true"; $env:UV_NATIVE_TLS="true"; $env:VRYMNOX_NODE_URL="https://node.vrymdor.com/t/abc123def456"; $env:VRYMNOX_AGENT_ID="agt_..."; $env:VRYMNOX_AGENT_SECRET="vrym_agent_..."; uv tool install --force "vrymdor-node>=1.2"; uvx --from "vrymdor-node>=1.2" vrymdor-mcp --install-claude
+Get-Process claude -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 2; $env:UV_SYSTEM_CERTS="true"; $env:UV_NATIVE_TLS="true"; $env:VRYMNOX_NODE_URL="https://node.vrymdor.com/t/abc123def456"; $env:VRYMNOX_AGENT_ID="agt_..."; $env:VRYMNOX_AGENT_SECRET="vrym_agent_..."; uv tool install --force "vrymdor-node>=1.2"; uvx --from "vrymdor-node>=1.2" vrymdor-mcp --install-claude
 ```
 
 macOS and Linux:
