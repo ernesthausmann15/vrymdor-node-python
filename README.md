@@ -45,14 +45,43 @@ message to your node and renews the agent's token by itself. The easiest way to 
 a matching Python for you: install uv once (macOS and Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`;
 Windows PowerShell: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`).
 
-Test the agent first (it prints "Connected: ..." or the reason it is not):
+### Claude Desktop in one command
+
+It tests your agent, writes Claude Desktop's settings in the right place (keeping a backup of the old file) and
+restarts Claude Desktop. Use the three values from AI agents, Connect your AI Node.
+
+Windows (PowerShell):
+
+```powershell
+$env:UV_SYSTEM_CERTS="true"; $env:UV_NATIVE_TLS="true"; $env:VRYMNOX_NODE_URL="https://node.vrymdor.com/t/abc123def456"; $env:VRYMNOX_AGENT_ID="agt_..."; $env:VRYMNOX_AGENT_SECRET="vrym_agent_..."; uv tool install --force "vrymdor-node>=1.2"; uvx --from "vrymdor-node>=1.2" vrymdor-mcp --install-claude
+```
+
+macOS and Linux:
+
+```bash
+export UV_SYSTEM_CERTS=true UV_NATIVE_TLS=true VRYMNOX_NODE_URL=https://node.vrymdor.com/t/abc123def456 \
+  VRYMNOX_AGENT_ID=agt_... VRYMNOX_AGENT_SECRET=vrym_agent_...
+uv tool install --force "vrymdor-node>=1.2" && uvx --from "vrymdor-node>=1.2" vrymdor-mcp --install-claude
+```
+
+Then in Claude Desktop click **+** next to the message box, then **Connectors**: **vrymdor** is listed. Ask Claude
+"run vrymdor_status" to confirm: it answers Connected, with your node and agent, or says exactly what to fix.
+
+`UV_SYSTEM_CERTS` and `UV_NATIVE_TLS` make uv download with the computer's own certificates, which antivirus HTTPS
+scanning (Norton, Avast, AVG) and company proxies need. The bridge itself always trusts the computer's certificates.
+
+### Test the agent
+
+It prints "Connected: ..." or the reason it is not:
 
 ```bash
 VRYMNOX_NODE_URL=https://node.vrymdor.com/t/abc123def456 VRYMNOX_AGENT_ID=agt_... \
   VRYMNOX_AGENT_SECRET=vrym_agent_... uvx --from vrymdor-node vrymdor-mcp --check
 ```
 
-Claude Desktop (`claude_desktop_config.json`) and Cursor (`mcp.json`):
+### Settings by hand: Cursor, VS Code, or Claude Desktop
+
+Cursor (`mcp.json`) and Claude Desktop (`claude_desktop_config.json`):
 
 ```json
 {
@@ -63,7 +92,9 @@ Claude Desktop (`claude_desktop_config.json`) and Cursor (`mcp.json`):
       "env": {
         "VRYMNOX_NODE_URL": "https://node.vrymdor.com/t/abc123def456",
         "VRYMNOX_AGENT_ID": "agt_...",
-        "VRYMNOX_AGENT_SECRET": "vrym_agent_..."
+        "VRYMNOX_AGENT_SECRET": "vrym_agent_...",
+        "UV_SYSTEM_CERTS": "true",
+        "UV_NATIVE_TLS": "true"
       }
     }
   }
@@ -73,7 +104,9 @@ Claude Desktop (`claude_desktop_config.json`) and Cursor (`mcp.json`):
 VS Code (`.vscode/mcp.json`): the same block under `"servers"`, with `"type": "stdio"` added.
 
 If the client says it cannot find `uvx` (Claude Desktop on macOS starts commands without your shell's PATH), put
-the full path in `command`: the output of `which uvx` (macOS, Linux) or `where uvx` (Windows).
+the full path in `command`: the output of `which uvx` (macOS, Linux) or `where.exe uvx` (Windows).
+
+The client always lists **vrymdor**, even when the node cannot be reached: its `vrymdor_status` tool then says why.
 
 ## License
 

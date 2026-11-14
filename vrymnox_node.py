@@ -16,11 +16,29 @@ VrymnoxError with a stable `code` (tool_not_allowed, rate_limited, agent_stopped
 """
 from __future__ import annotations
 
+import os
+import ssl
 import time
 import uuid
 from typing import Any
 
 import httpx
+
+
+def system_ssl_context() -> ssl.SSLContext | bool:
+    """Trust the certificates this computer trusts (the Windows, macOS or Linux certificate store), as a browser does.
+
+    Antivirus HTTPS scanning (Norton, Avast, AVG and others) and company proxies replace a site's certificate with their
+    own, which the computer trusts but Python's bundled list does not: without this, every call to the node fails with a
+    certificate error on those machines. SSL_CERT_FILE or SSL_CERT_DIR, when set, keep their usual meaning."""
+    if os.environ.get("SSL_CERT_FILE") or os.environ.get("SSL_CERT_DIR"):
+        return True
+    try:
+        import truststore
+
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:  # noqa: BLE001 (truststore missing or the platform store unreadable: Python's own list)
+        return True
 
 
 class VrymnoxError(Exception):
@@ -42,7 +60,8 @@ class VrymnoxNode:
                  timeout: float = 120.0) -> None:
         self.url, self.agent_id, self._secret = url.rstrip("/"), agent_id, agent_secret
         # Our own name: Cloudflare's browser check in front of a hosted node can refuse stock library names.
-        self._http = http or httpx.Client(timeout=timeout, headers={"User-Agent": "vrymdor-node-python"})
+        self._http = http or httpx.Client(timeout=timeout, headers={"User-Agent": "vrymdor-node-python"},
+                                          verify=system_ssl_context())
         self._token, self._expires = "", 0.0
 
     # ------------------------------------------------------------ plumbing
