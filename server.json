@@ -5,12 +5,12 @@
   "description": "Masks personal data and secrets in your AI agent's tool calls, through your Vrymdor AI Node.",
   "repository": {"url": "https://github.com/ernesthausmann15/vrymdor-node-python", "source": "github"},
   "websiteUrl": "https://vrymdor.com/developers/connect",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "vrymdor-node",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "runtimeHint": "uvx",
       "transport": {"type": "stdio"},
       "environmentVariables": [

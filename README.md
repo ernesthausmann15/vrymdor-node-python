@@ -47,8 +47,9 @@ Windows PowerShell: `powershell -ExecutionPolicy ByPass -c "irm https://astral.s
 
 ### Claude Desktop in one command
 
-It tests your agent, writes Claude Desktop's settings in the right place (keeping a backup of the old file) and
-restarts Claude Desktop. Use the three values from AI agents, Connect your AI Node.
+It tests your agent, writes Claude Desktop's settings in the right place (keeping a backup of the old file), runs
+the written command the way Claude Desktop will (start, then list the tools, timed against Claude's 60 second limit)
+and restarts Claude Desktop. Use the three values from AI agents, Connect your AI Node.
 
 Windows (PowerShell):
 

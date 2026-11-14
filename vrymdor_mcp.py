@@ -48,6 +48,13 @@ NAMES = {"url": ("VRYMNOX_NODE_URL", "VRYMDOR_NODE_URL"),
          "id": ("VRYMNOX_AGENT_ID", "VRYMDOR_AGENT_ID"),
          "secret": ("VRYMNOX_AGENT_SECRET", "VRYMDOR_AGENT_SECRET")}
 
+# Claude Desktop gives up on a request after 60 seconds, so every answer must come back well inside that, even when a
+# connection stalls (antivirus HTTPS scanning and some networks leave a reused connection hanging): a short wait, then
+# one more try on a fresh connection.
+QUICK_SECONDS = 20.0   # initialize, tools/list, ping and the token
+CALL_SECONDS = 25.0    # tools/call (twice at most: 50 seconds)
+RETRY_ERRORS = (httpx.TimeoutException, httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
+
 STATUS_TOOL = "vrymdor_status"
 SERVER_KEY = "vrymdor"
 PROTOCOL = "2025-06-18"
@@ -157,33 +164,75 @@ LIST_CHANGED = json.dumps({"jsonrpc": "2.0", "method": "notifications/tools/list
 
 
 class Bridge:
-    def __init__(self, url: str, agent_id: str, secret: str, *, http: httpx.Client | None = None) -> None:
+    def __init__(self, url: str, agent_id: str, secret: str, *, http: httpx.Client | None = None,
+                 log: TextIO | None = None) -> None:
         self.url, self.agent_id, self._secret = clean_url(url), agent_id, secret
-        self._http = http or httpx.Client(timeout=120.0, headers={"User-Agent": user_agent()},
-                                          verify=system_ssl_context())
+        self._owns_http = http is None
+        self._http = http or self._new_client()
         self._token, self._expires = "", 0.0
         self._session = ""
         self.problem = ""   # why the node could not be reached last time; "" while it works
+        self._tools: list[dict] = []   # the node's last good tool list, offered again if a later list fails
+        self._log = log
+
+    @staticmethod
+    def _new_client() -> httpx.Client:
+        return httpx.Client(timeout=httpx.Timeout(QUICK_SECONDS, connect=10.0), headers={"User-Agent": user_agent()},
+                            verify=system_ssl_context())
+
+    def _fresh_connection(self) -> None:
+        """Drop pooled connections: a stalled one must not be reused for the retry."""
+        if self._owns_http:
+            try:
+                self._http.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._http = self._new_client()
+
+    def _note(self, text: str) -> None:
+        if self._log is not None:
+            print(f"vrymdor-mcp: {text}", file=self._log, flush=True)
 
     def token(self) -> str:
         if self._token and time.time() < self._expires - 60:
             return self._token
-        r = self._http.post(f"{self.url}/v1/token", json={"agent_id": self.agent_id, "agent_secret": self._secret})
+        r = self._http.post(f"{self.url}/v1/token", json={"agent_id": self.agent_id, "agent_secret": self._secret},
+                            timeout=httpx.Timeout(QUICK_SECONDS, connect=10.0))
         if r.status_code != 200:
             raise RuntimeError(refusal(r.status_code, r.content))
         doc = r.json()
         self._token, self._expires = doc["access_token"], time.time() + int(doc.get("expires_in", 600))
         return self._token
 
-    def _send(self, line: str) -> httpx.Response:
+    def _send(self, line: str, method: str = "") -> httpx.Response:
+        wait = CALL_SECONDS if method == "tools/call" else QUICK_SECONDS
+
         def post() -> httpx.Response:
             headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                        "Authorization": f"Bearer {self.token()}"}
             if self._session:
                 headers["Mcp-Session-Id"] = self._session
-            return self._http.post(f"{self.url}/mcp", content=line.encode("utf-8"), headers=headers)
+            return self._http.post(f"{self.url}/mcp", content=line.encode("utf-8"), headers=headers,
+                                   timeout=httpx.Timeout(wait, connect=10.0))
 
-        r = post()
+        started = time.monotonic()
+        try:
+            r = post()
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            if certificate_problem(exc):
+                raise
+            self._note(f"{method or 'request'}: no connection ({type(exc).__name__}), trying once more")
+            self._fresh_connection()
+            r = post()
+        except RETRY_ERRORS as exc:
+            # A tool call that may have reached the node is not sent twice, except a read only one.
+            if method == "tools/call" and not line_is_read_only(line):
+                raise
+            self._note(f"{method or 'request'}: no answer after {time.monotonic() - started:.1f} s "
+                       f"({type(exc).__name__}), trying once more on a fresh connection")
+            self._fresh_connection()
+            r = post()
+        self._note(f"{method or 'request'} answered in {time.monotonic() - started:.1f} s")
         if r.status_code == 401:   # the token was revoked or the node restarted: get a fresh one and try once more
             self._token, self._expires = "", 0.0
             r = post()
@@ -193,14 +242,17 @@ class Bridge:
 
     def _node_tools(self) -> list[dict]:
         """The node's own tool list (raises on any failure, in words)."""
-        r = self._send(json.dumps({"jsonrpc": "2.0", "id": "vrymdor-status", "method": "tools/list"}))
+        r = self._send(json.dumps({"jsonrpc": "2.0", "id": "vrymdor-status", "method": "tools/list"}), "tools/list")
         text = r.content.decode("utf-8")
         if r.headers.get("content-type", "").split(";")[0].strip().lower() == "text/event-stream":
             text = sse_messages(text).split("\n")[0]
         doc = json.loads(text or "{}")
         if doc.get("error"):
             raise RuntimeError(str(doc["error"].get("message") or doc["error"]).rstrip("."))
-        return [t for t in doc.get("result", {}).get("tools", []) if isinstance(t, dict)]
+        tools = [t for t in doc.get("result", {}).get("tools", []) if isinstance(t, dict)]
+        if tools:
+            self._tools = [t for t in tools if t.get("name") != STATUS_TOOL]
+        return tools
 
     def status(self) -> tuple[bool, str, list[str]]:
         """Connected or not, in a sentence for a person, and the node's tool names."""
@@ -233,7 +285,7 @@ class Bridge:
             out = _reply(msg.get("id"), {"content": [{"type": "text", "text": text}], "isError": not ok})
             return f"{LIST_CHANGED}\n{out}" if ok and was_down else out
         try:
-            r = self._send(line)
+            r = self._send(line, str(method or ""))
         except (httpx.HTTPError, RuntimeError, ValueError, KeyError) as exc:
             self.problem = why(exc, self.url)
             print(f"vrymdor-mcp: {self.problem}", file=err, flush=True)
@@ -245,8 +297,19 @@ class Bridge:
         if r.headers.get("content-type", "").split(";")[0].strip().lower() == "text/event-stream":
             text = sse_messages(text)
         if method == "tools/list" and has_id:
+            self._remember_tools(text, msg.get("id"))
             text = _with_status_tool(text, msg.get("id"))
         return text or None
+
+    def _remember_tools(self, text: str, id_) -> None:
+        for raw in text.split("\n"):
+            try:
+                doc = json.loads(raw)
+            except ValueError:
+                continue
+            tools = doc.get("result", {}).get("tools") if isinstance(doc, dict) and doc.get("id") == id_ else None
+            if isinstance(tools, list) and tools:
+                self._tools = [t for t in tools if isinstance(t, dict) and t.get("name") != STATUS_TOOL]
 
     def _offline(self, msg: dict, method, params: dict, has_id: bool) -> str | None:
         """The node could not be reached: still start, so the client lists "vrymdor" with a tool that says why."""
@@ -259,14 +322,25 @@ class Bridge:
                                 "serverInfo": {"name": SERVER_KEY, "title": "Vrymdor AI Node", "version": version()},
                                 "instructions": (f"Not connected to the Vrymdor AI Node yet: {self.problem}. The "
                                                  f"{STATUS_TOOL} tool checks again and says what to fix.")})
-        if method == "tools/list":
-            return _reply(id_, {"tools": [status_tool(self.problem)]})
+        if method == "tools/list":   # the last good list stays usable; the status tool says what is wrong right now
+            return _reply(id_, {"tools": [*self._tools, status_tool(self.problem)]})
         if method == "ping":
             return _reply(id_, {})
         if method in ("resources/list", "prompts/list"):
             return _reply(id_, {method.split("/")[0]: []})
         return json.dumps({"jsonrpc": "2.0", "id": id_,
                            "error": {"code": -32603, "message": f"Your Vrymdor AI Node could not be reached: {self.problem}"}})
+
+
+READ_ONLY_TOOLS = ("vrymnox_sanitize", "vrymnox_check", "vrymnox_hold_status")
+
+
+def line_is_read_only(line: str) -> bool:
+    """A tools/call that changes nothing anywhere, so sending it twice is harmless."""
+    try:
+        return json.loads(line).get("params", {}).get("name") in READ_ONLY_TOOLS
+    except (ValueError, AttributeError):
+        return False
 
 
 def _with_status_tool(text: str, id_) -> str:
@@ -388,6 +462,43 @@ def write_claude_config(path: Path, entry: dict) -> Path | None:
     return backup
 
 
+def as_claude_would(entry: dict, timeout: float = 55.0) -> tuple[bool, str]:
+    """Run the exact command written into Claude's settings and do what Claude does first: initialize, then list the
+    tools, within Claude's 60 second limit. Returns whether the tools came back, in words."""
+    lines = [{"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+                 "protocolVersion": PROTOCOL, "capabilities": {}, "clientInfo": {"name": "vrymdor-setup", "version": version()}}},
+             {"jsonrpc": "2.0", "method": "notifications/initialized"},
+             {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}]
+    started = time.monotonic()
+    try:
+        proc = subprocess.run([entry["command"], *entry.get("args", [])], input="".join(json.dumps(m) + "\n" for m in lines),
+                              capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+                              env={**os.environ, **entry.get("env", {})})
+    except subprocess.TimeoutExpired:
+        return False, f"it did not answer within {timeout:.0f} seconds, so Claude Desktop would give up"
+    except OSError as exc:
+        return False, f"it could not be started ({exc})"
+    took = time.monotonic() - started
+    answers = {}
+    for raw in proc.stdout.splitlines():
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(doc, dict) and "id" in doc:
+            answers[doc["id"]] = doc
+    tools = [t.get("name") for t in answers.get(1, {}).get("result", {}).get("tools", []) if isinstance(t, dict)]
+    node_tools = [n for n in tools if n != STATUS_TOOL]
+    if node_tools:
+        return True, f"it started and listed {len(tools)} tools in {took:.1f} seconds"
+    if tools:
+        desc = str(answers[1]["result"]["tools"][-1].get("description", ""))
+        reason = desc.split("yet: ", 1)[-1].split(". Run this tool", 1)[0] if "yet: " in desc else desc
+        return False, f"it started in {took:.1f} seconds but lists only {STATUS_TOOL}, because {reason[:300]}"
+    last = (proc.stderr.strip().splitlines() or ["no answer"])[-1]
+    return False, f"it did not list any tools ({last[:300]})"
+
+
 def restart_claude(platform: str | None = None) -> str:
     """Close Claude Desktop and open it again so it reads the new settings. Returns what happened, in words."""
     platform = platform or sys.platform
@@ -454,13 +565,18 @@ def install_claude(args: list[str], out: TextIO = sys.stdout, bridge: Bridge | N
     if not command:
         print("   It starts the bridge with uvx. For a faster start that never downloads, run "
               "'uv tool install vrymdor-node' and then this command again.", file=out)
+    if "--no-simulate" not in args:
+        worked, what = as_claude_would(entry)
+        print(f"3. Running it the way Claude Desktop will: {what}.", file=out)
+        if not worked:
+            print("   Claude Desktop will list vrymdor, and its vrymdor_status tool will say what is wrong.", file=out)
     state = "skipped" if "--no-restart" in args else restart_claude()
     if state == "restarted":
-        print("3. Claude Desktop was restarted so it reads the new settings.", file=out)
+        print("4. Claude Desktop was restarted so it reads the new settings.", file=out)
     elif state == "closed":
-        print("3. Claude Desktop was closed. Open it again.", file=out)
+        print("4. Claude Desktop was closed. Open it again.", file=out)
     else:
-        print("3. Open Claude Desktop (if it is open, quit it completely from its icon by the clock, then open it).",
+        print("4. Open Claude Desktop (if it is open, quit it completely from its icon by the clock, then open it).",
               file=out)
     print("Done. In Claude Desktop, click + next to the message box, then Connectors: vrymdor is listed. "
           "To confirm, ask Claude: \"run vrymdor_status\". It answers Connected, with your node and agent.", file=out)
@@ -486,9 +602,9 @@ def main(argv: list[str] | None = None) -> int:
         print("vrymdor-mcp: VRYMNOX_NODE_URL must start with https:// (or http:// for a node on this computer)",
               file=sys.stderr)
         return 2
-    bridge = Bridge(url, setting("id"), setting("secret"))
     if "--check" in args:
-        return check(bridge)
+        return check(Bridge(url, setting("id"), setting("secret")))
+    bridge = Bridge(url, setting("id"), setting("secret"), log=sys.stderr)   # timings go to the client's log
     _utf8(sys.stdin)
     _utf8(sys.stdout)
     try:
@@ -498,7 +614,13 @@ def main(argv: list[str] | None = None) -> int:
                 if out is not None:
                     sys.stdout.write(out + "\n")
                     sys.stdout.flush()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, BrokenPipeError):
+        pass
+    except OSError:
+        pass   # the client closed the connection (Windows reports it as Invalid argument): nothing left to answer
+    try:
+        sys.stdout.flush()
+    except OSError:
         pass
     return 0
 
